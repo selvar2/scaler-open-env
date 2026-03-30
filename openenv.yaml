@@ -1,0 +1,11 @@
+spec_version: 1
+name: email_triage_env
+version: "1.0.0"
+description: >
+  A real-world email triage environment where AI agents classify priority,
+  categorize type, route to departments, and draft responses for customer
+  support emails. Three difficulty levels with deterministic grading.
+type: space
+runtime: fastapi
+app: server.app:app
+port: 8000
