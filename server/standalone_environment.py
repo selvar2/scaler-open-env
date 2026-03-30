@@ -1,7 +1,8 @@
 """
-Email Triage Environment — Core Logic.
+Email Triage Environment — Standalone (dict-based) Implementation.
 
-Implements the OpenEnv interface: reset() / step() / state()
+Used by baseline.py for offline evaluation without the OpenEnv server.
+For the OpenEnv-compatible version, see email_triage_environment.py.
 """
 
 import random

@@ -81,7 +81,7 @@ def heuristic_agent(email_obs: dict) -> dict:
 
 def run_standalone():
     """Run baseline without a server (uses environment directly)."""
-    from email_triage_env.server.environment import EmailTriageEnvironment
+    from email_triage_env.server.standalone_environment import EmailTriageEnvironment
     from email_triage_env.tasks.graders import TASK_DEFINITIONS
     from email_triage_env.data.emails import get_emails_by_difficulty, EMAILS
 
