@@ -1,54 +1,43 @@
 #!/usr/bin/env python3
 """
-Inference script for the Email Triage Environment.
+Inference Script for the Email Triage Environment.
+===================================
+MANDATORY
+- Before submitting, ensure the following variables are defined in your environment configuration:
+    API_BASE_URL   The API endpoint for the LLM.
+    MODEL_NAME     The model identifier to use for inference.
+    HF_TOKEN       Your Hugging Face / API key.
 
-Uses an OpenAI-compatible LLM (via HuggingFace Inference Providers)
-to classify, route, and respond to customer support emails.
-
-Prerequisites
--------------
-1. Deploy the environment to HF Spaces (or run locally)::
-
-       openenv push --repo-id YOUR_USERNAME/email-triage-env
-
-2. Set your API key::
-
-       export HF_TOKEN=your_token_here
-
-3. Run this script::
-
-       python inference.py
-
-   Or against a local server::
-
-       python inference.py --url http://localhost:8000
-
-   Or run the heuristic baseline (no LLM needed)::
-
-       python inference.py --baseline
+- The inference script must be named `inference.py` and placed in the root directory of the project
+- Participants must use OpenAI Client for all LLM calls using above variables
 """
 
-from __future__ import annotations
-
-import argparse
 import json
 import os
+import re
 import sys
 from typing import Any, Dict, List
 
-import requests
 from openai import OpenAI
 
+from client import EmailTriageEnv
+from models import EmailTriageAction
+
 # ---------------------------------------------------------------------------
-# Configuration
+# Configuration (mandatory env vars per hackathon rules)
 # ---------------------------------------------------------------------------
 
-DEFAULT_ENV_URL = "https://selva12-email-triage-env.hf.space"
-API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
-API_KEY = os.getenv("API_KEY") or os.getenv("HF_TOKEN")
-MODEL = os.getenv("MODEL", "Qwen/Qwen3-235B-A22B-Instruct-2507")
+API_BASE_URL = os.getenv("API_BASE_URL") or "https://router.huggingface.co/v1"
+API_KEY = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
+MODEL_NAME = os.getenv("MODEL_NAME")
+
+ENV_URL = os.getenv("ENV_URL", "https://selva12-email-triage-env.hf.space")
 
 VERBOSE = True
+
+# ---------------------------------------------------------------------------
+# System prompt
+# ---------------------------------------------------------------------------
 
 SYSTEM_PROMPT = """You are a customer support triage agent. You will receive a customer email and must classify it.
 
@@ -92,7 +81,7 @@ Remember: Output ONLY the JSON object, nothing else."""
 
 
 # ---------------------------------------------------------------------------
-# Heuristic baseline (no LLM needed)
+# Heuristic fallback (used when LLM response cannot be parsed)
 # ---------------------------------------------------------------------------
 
 def heuristic_agent(email: Dict[str, Any]) -> Dict[str, Any]:
@@ -155,7 +144,7 @@ def heuristic_agent(email: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# LLM-based agent
+# LLM-based agent (uses OpenAI client as required)
 # ---------------------------------------------------------------------------
 
 def llm_agent(email: Dict[str, Any], client: OpenAI) -> Dict[str, Any]:
@@ -181,21 +170,23 @@ def llm_agent(email: Dict[str, Any], client: OpenAI) -> Dict[str, Any]:
     if email.get("thread_length", 1) > 1:
         email_text += f"\n[This is part of a thread with {email['thread_length']} messages]\n"
 
-    response = client.chat.completions.create(
-        model=MODEL,
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": email_text},
-        ],
-        max_tokens=1024,
-        temperature=0.1,
-    )
-
-    content = response.choices[0].message.content.strip()
+    try:
+        completion = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": email_text},
+            ],
+            max_tokens=1024,
+            temperature=0.1,
+        )
+        content = completion.choices[0].message.content.strip()
+    except Exception as exc:
+        print(f"  [WARN] LLM request failed ({exc}), falling back to heuristic")
+        return heuristic_agent(email)
 
     # Parse JSON from response (handle markdown code blocks)
     if "```" in content:
-        import re
         blocks = re.findall(r"```(?:json)?\s*(.*?)```", content, re.DOTALL)
         if blocks:
             content = blocks[0].strip()
@@ -219,68 +210,110 @@ def llm_agent(email: Dict[str, Any], client: OpenAI) -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Runner
+# Main inference loop
 # ---------------------------------------------------------------------------
 
-def run_inference(
-    env_url: str,
-    agent_fn,
-    agent_name: str = "agent",
-) -> Dict[str, Any]:
-    """Run the agent against all tasks and emails via the grader endpoint."""
+def main() -> None:
+    if not API_KEY:
+        print("ERROR: HF_TOKEN (or API_KEY) must be set for LLM inference.")
+        sys.exit(1)
+
+    if not MODEL_NAME:
+        print("ERROR: MODEL_NAME must be set (e.g. Qwen/Qwen3-235B-A22B-Instruct-2507)")
+        sys.exit(1)
+
+    # Initialize OpenAI client (mandatory per hackathon rules)
+    client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
+
+    # Connect to the Email Triage Environment
+    env = EmailTriageEnv(base_url=ENV_URL)
+
     print(f"\n{'=' * 60}")
-    print(f"  Email Triage Inference — {agent_name}")
-    print(f"  Environment: {env_url}")
-    print(f"{'=' * 60}\n")
+    print(f"  Email Triage Inference")
+    print(f"{'=' * 60}")
+    print(f"  API:   {API_BASE_URL}")
+    print(f"  Model: {MODEL_NAME}")
+    print(f"  Env:   {ENV_URL}")
+    print()
 
-    # Get task definitions
-    tasks_resp = requests.get(f"{env_url}/tasks", timeout=15)
-    tasks_resp.raise_for_status()
-    tasks = tasks_resp.json()["tasks"]
+    # Task IDs and their configurations
+    tasks = [
+        {"task_id": "classification", "difficulty": "easy"},
+        {"task_id": "routing", "difficulty": "medium"},
+        {"task_id": "full_triage", "difficulty": "hard"},
+    ]
 
-    all_results = {}
+    all_results: Dict[str, Any] = {}
 
     for task in tasks:
         task_id = task["task_id"]
         difficulty = task["difficulty"]
-        num_emails = task["num_emails"]
 
-        print(f"  Task: {task_id} ({difficulty}) — {num_emails} emails")
+        print(f"  Task: {task_id} ({difficulty})")
         print(f"  {'-' * 50}")
 
-        scores = []
+        scores: List[float] = []
 
-        for i in range(num_emails):
-            # Reset to get an email for this task
-            reset_resp = requests.post(
-                f"{env_url}/reset",
-                json={"task_id": task_id, "seed": 42 + i},
-                timeout=15,
+        # Run multiple episodes per task with different seeds
+        num_episodes = {"easy": 5, "medium": 4, "hard": 3}[difficulty]
+
+        for i in range(num_episodes):
+            # Reset environment for this task/episode
+            result = env.reset(task_id=task_id, seed=42 + i)
+
+            # Extract email from observation
+            obs = result.observation if hasattr(result, "observation") else result
+            email_data: Dict[str, Any] = {}
+
+            if hasattr(obs, "email") and obs.email is not None:
+                # Typed observation from EnvClient
+                email_obj = obs.email
+                email_data = {
+                    "sender": getattr(email_obj, "sender", ""),
+                    "subject": getattr(email_obj, "subject", ""),
+                    "body": getattr(email_obj, "body", ""),
+                    "timestamp": getattr(email_obj, "timestamp", ""),
+                    "has_attachment": getattr(email_obj, "has_attachment", False),
+                    "thread_length": getattr(email_obj, "thread_length", 1),
+                    "sender_history": getattr(email_obj, "sender_history", {}),
+                }
+            elif isinstance(obs, dict):
+                # Dict-based observation (HTTP fallback)
+                obs_inner = obs.get("observation", obs)
+                email_data = obs_inner.get("email", {})
+            else:
+                # Try to extract from result directly
+                if isinstance(result, dict):
+                    obs_inner = result.get("observation", result)
+                    email_data = obs_inner.get("email", {})
+
+            # Run LLM agent on the email
+            action_dict = llm_agent(email_data, client)
+
+            # Step with the action
+            action = EmailTriageAction(
+                priority=action_dict["priority"],
+                category=action_dict["category"],
+                department=action_dict.get("department", ""),
+                response=action_dict.get("response", ""),
+                confidence=action_dict.get("confidence", 0.8),
             )
-            reset_resp.raise_for_status()
-            reset_data = reset_resp.json()
 
-            obs = reset_data.get("observation", reset_data)
-            email = obs.get("email", {})
+            step_result = env.step(action)
 
-            # Run agent
-            action = agent_fn(email)
+            # Extract reward
+            if hasattr(step_result, "reward"):
+                score = step_result.reward or 0.0
+            elif isinstance(step_result, dict):
+                score = step_result.get("reward", 0.0)
+            else:
+                score = 0.0
 
-            # Score via grader (deterministic, works with HTTP stateless mode)
-            step_resp = requests.post(
-                f"{env_url}/step",
-                json={"action": action},
-                timeout=15,
-            )
-            step_resp.raise_for_status()
-            step_data = step_resp.json()
-
-            score = step_data.get("reward", 0.0)
             scores.append(score)
 
             if VERBOSE:
-                subject = email.get("subject", "unknown")[:50]
-                print(f"    [{i+1}/{num_emails}] {subject:50s} → {score:.3f}")
+                subject = email_data.get("subject", "unknown")[:50]
+                print(f"    [{i+1}/{num_episodes}] {subject:50s} -> {score:.3f}")
 
         avg = sum(scores) / len(scores) if scores else 0.0
         all_results[task_id] = {
@@ -295,63 +328,11 @@ def run_inference(
     print(f"  RESULTS SUMMARY")
     print(f"{'=' * 60}")
     for task_id, data in all_results.items():
-        print(f"  {task_id:20s} ({data['difficulty']:6s}) → {data['avg_score']:.3f}")
+        print(f"  {task_id:20s} ({data['difficulty']:6s}) -> {data['avg_score']:.3f}")
 
     overall = sum(d["avg_score"] for d in all_results.values()) / len(all_results) if all_results else 0
     print(f"\n  Overall average: {overall:.3f}")
     print()
-
-    return all_results
-
-
-# ---------------------------------------------------------------------------
-# Entrypoint
-# ---------------------------------------------------------------------------
-
-def main():
-    parser = argparse.ArgumentParser(description="Email Triage Inference")
-    parser.add_argument(
-        "--url",
-        type=str,
-        default=DEFAULT_ENV_URL,
-        help=f"Environment URL (default: {DEFAULT_ENV_URL})",
-    )
-    parser.add_argument(
-        "--baseline",
-        action="store_true",
-        help="Use heuristic baseline instead of LLM",
-    )
-    parser.add_argument(
-        "--model",
-        type=str,
-        default=None,
-        help="Override LLM model name",
-    )
-    args = parser.parse_args()
-
-    if args.model:
-        global MODEL
-        MODEL = args.model
-
-    if args.baseline:
-        run_inference(
-            env_url=args.url,
-            agent_fn=heuristic_agent,
-            agent_name="Heuristic Baseline",
-        )
-    else:
-        if not API_KEY:
-            print("ERROR: Set HF_TOKEN or API_KEY environment variable for LLM inference.")
-            print("       Or use --baseline for the heuristic agent (no API key needed).")
-            sys.exit(1)
-
-        client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
-
-        run_inference(
-            env_url=args.url,
-            agent_fn=lambda email: llm_agent(email, client),
-            agent_name=f"LLM ({MODEL})",
-        )
 
 
 if __name__ == "__main__":
