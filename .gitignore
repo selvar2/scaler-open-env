@@ -31,3 +31,6 @@ Thumbs.db
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Local validation scripts (not part of submission)
+validate-submission.sh
