@@ -27,13 +27,11 @@ from models import EmailTriageAction
 # Configuration (mandatory env vars per hackathon rules)
 # ---------------------------------------------------------------------------
 
-API_BASE_URL = os.getenv("API_BASE_URL") or "https://router.huggingface.co/v1"
-API_KEY = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
-MODEL_NAME = os.getenv("MODEL_NAME")
+API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
+MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen3-235B-A22B-Instruct-2507")
+HF_TOKEN = os.getenv("HF_TOKEN")
 
 ENV_URL = os.getenv("ENV_URL", "https://selva12-email-triage-env.hf.space")
-
-VERBOSE = True
 
 # ---------------------------------------------------------------------------
 # System prompt
@@ -194,9 +192,8 @@ def llm_agent(email: Dict[str, Any], client: OpenAI) -> Dict[str, Any]:
     try:
         action = json.loads(content)
     except json.JSONDecodeError:
-        if VERBOSE:
-            print(f"  [WARN] Failed to parse LLM response, falling back to heuristic")
-            print(f"  LLM output: {content[:200]}")
+        print(f"  [WARN] Failed to parse LLM response, falling back to heuristic")
+        print(f"  LLM output: {content[:200]}")
         return heuristic_agent(email)
 
     # Ensure required fields exist with defaults
@@ -214,26 +211,18 @@ def llm_agent(email: Dict[str, Any], client: OpenAI) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    if not API_KEY:
-        print("ERROR: HF_TOKEN (or API_KEY) must be set for LLM inference.")
-        sys.exit(1)
-
-    if not MODEL_NAME:
-        print("ERROR: MODEL_NAME must be set (e.g. Qwen/Qwen3-235B-A22B-Instruct-2507)")
+    if not HF_TOKEN:
+        print("ERROR: HF_TOKEN must be set for LLM inference.")
         sys.exit(1)
 
     # Initialize OpenAI client (mandatory per hackathon rules)
-    client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
+    client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
 
     # Connect to the Email Triage Environment
     env = EmailTriageEnv(base_url=ENV_URL)
 
-    print(f"\n{'=' * 60}")
-    print(f"  Email Triage Inference")
-    print(f"{'=' * 60}")
+    print(f"START inference.py | model={MODEL_NAME} | env={ENV_URL}")
     print(f"  API:   {API_BASE_URL}")
-    print(f"  Model: {MODEL_NAME}")
-    print(f"  Env:   {ENV_URL}")
     print()
 
     # Task IDs and their configurations
@@ -311,9 +300,8 @@ def main() -> None:
 
             scores.append(score)
 
-            if VERBOSE:
-                subject = email_data.get("subject", "unknown")[:50]
-                print(f"    [{i+1}/{num_episodes}] {subject:50s} -> {score:.3f}")
+            subject = email_data.get("subject", "unknown")[:50]
+            print(f"STEP task={task_id} episode={i+1}/{num_episodes} | {subject} | score={score:.3f}")
 
         avg = sum(scores) / len(scores) if scores else 0.0
         all_results[task_id] = {
@@ -324,15 +312,11 @@ def main() -> None:
         print(f"    Average: {avg:.3f}\n")
 
     # Summary
-    print(f"{'=' * 60}")
-    print(f"  RESULTS SUMMARY")
-    print(f"{'=' * 60}")
-    for task_id, data in all_results.items():
-        print(f"  {task_id:20s} ({data['difficulty']:6s}) -> {data['avg_score']:.3f}")
-
     overall = sum(d["avg_score"] for d in all_results.values()) / len(all_results) if all_results else 0
-    print(f"\n  Overall average: {overall:.3f}")
-    print()
+    for task_id, data in all_results.items():
+        print(f"STEP result | {task_id} ({data['difficulty']}) -> {data['avg_score']:.3f}")
+
+    print(f"END inference.py | overall={overall:.3f}")
 
 
 if __name__ == "__main__":
