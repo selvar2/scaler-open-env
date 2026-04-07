@@ -13,6 +13,11 @@ def _normalize(value: str) -> str:
     return value.lower().strip().replace(" ", "_").replace("-", "_")
 
 
+def _clamp_score(score: float) -> float:
+    """Clamp score to strictly within (0, 1) as required by the validator."""
+    return max(0.01, min(score, 0.99))
+
+
 def grade_classification(action: Dict[str, Any], ground_truth: Dict[str, Any]) -> Dict[str, float]:
     """
     EASY TASK: Grade priority + category classification.
@@ -55,7 +60,7 @@ def grade_classification(action: Dict[str, Any], ground_truth: Dict[str, Any]) -
     else:
         details["category"] = "wrong"
 
-    return {"score": round(score, 3), "details": details}
+    return {"score": round(_clamp_score(score), 3), "details": details}
 
 
 def grade_routing(action: Dict[str, Any], ground_truth: Dict[str, Any]) -> Dict[str, float]:
@@ -109,7 +114,7 @@ def grade_routing(action: Dict[str, Any], ground_truth: Dict[str, Any]) -> Dict[
     else:
         details["department"] = "wrong"
 
-    return {"score": round(score, 3), "details": details}
+    return {"score": round(_clamp_score(score), 3), "details": details}
 
 
 def grade_full_triage(action: Dict[str, Any], ground_truth: Dict[str, Any]) -> Dict[str, float]:
@@ -187,7 +192,7 @@ def grade_full_triage(action: Dict[str, Any], ground_truth: Dict[str, Any]) -> D
         score += response_score
         details["response"] = f"{hits}/{len(key_points)} key points, {word_count} words"
 
-    return {"score": round(min(score, 1.0), 3), "details": details}
+    return {"score": round(_clamp_score(score), 3), "details": details}
 
 
 # ─── Task Registry ────────────────────────────────────────────
