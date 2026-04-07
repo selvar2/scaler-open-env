@@ -291,13 +291,14 @@ def main() -> None:
 
             step_result = env.step(action)
 
-            # Extract reward
+            # Extract reward and clamp to (0, 1) open interval
             if hasattr(step_result, "reward"):
-                score = step_result.reward or 0.0
+                score = step_result.reward or 0.01
             elif isinstance(step_result, dict):
-                score = step_result.get("reward", 0.0)
+                score = step_result.get("reward", 0.01)
             else:
-                score = 0.0
+                score = 0.01
+            score = max(0.01, min(float(score), 0.99))
 
             scores.append(score)
 
@@ -305,7 +306,8 @@ def main() -> None:
             subject = email_data.get("subject", "unknown")[:50]
             print(f"    [{i+1}/{num_episodes}] {subject} | score={score:.3f}")
 
-        avg = sum(scores) / len(scores) if scores else 0.0
+        avg = sum(scores) / len(scores) if scores else 0.01
+        avg = max(0.01, min(avg, 0.99))
         all_results[task_id] = {
             "difficulty": difficulty,
             "avg_score": round(avg, 3),
