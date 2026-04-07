@@ -238,6 +238,7 @@ def main() -> None:
         task_id = task["task_id"]
         difficulty = task["difficulty"]
 
+        print(f"[START] task={task_id}", flush=True)
         print(f"  Task: {task_id} ({difficulty})")
         print(f"  {'-' * 50}")
 
@@ -300,8 +301,9 @@ def main() -> None:
 
             scores.append(score)
 
+            print(f"[STEP] step={i+1} reward={score}", flush=True)
             subject = email_data.get("subject", "unknown")[:50]
-            print(f"STEP task={task_id} episode={i+1}/{num_episodes} | {subject} | score={score:.3f}")
+            print(f"    [{i+1}/{num_episodes}] {subject} | score={score:.3f}")
 
         avg = sum(scores) / len(scores) if scores else 0.0
         all_results[task_id] = {
@@ -310,13 +312,14 @@ def main() -> None:
             "scores": scores,
         }
         print(f"    Average: {avg:.3f}\n")
+        print(f"[END] task={task_id} score={avg:.2f} steps={len(scores)}", flush=True)
 
     # Summary
     overall = sum(d["avg_score"] for d in all_results.values()) / len(all_results) if all_results else 0
     for task_id, data in all_results.items():
-        print(f"STEP result | {task_id} ({data['difficulty']}) -> {data['avg_score']:.3f}")
+        print(f"  {task_id:20s} ({data['difficulty']:6s}) -> {data['avg_score']:.3f}")
 
-    print(f"END inference.py | overall={overall:.3f}")
+    print(f"\n  Overall average: {overall:.3f}")
 
 
 if __name__ == "__main__":
