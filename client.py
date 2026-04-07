@@ -6,7 +6,7 @@ from openenv.core import EnvClient
 from openenv.core.client_types import StepResult
 from openenv.core.env_server.types import State
 
-from .models import EmailTriageAction, EmailTriageObservation
+from models import EmailTriageAction, EmailTriageObservation
 
 
 class EmailTriageEnv(
@@ -39,7 +39,7 @@ class EmailTriageEnv(
         feedback_data = obs_data.get("feedback")
         feedback = None
         if feedback_data:
-            from .models import FeedbackDetail
+            from models import FeedbackDetail
             feedback = FeedbackDetail(**feedback_data)
 
         observation = EmailTriageObservation(
